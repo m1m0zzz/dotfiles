@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 引数チェック: ポート必須
+if [ "$#" -ne 1 ]; then
+  echo "使い方: $(basename "$0") <port>" >&2
+  echo "例: $(basename "$0") 4321" >&2
+  exit 1
+fi
+
+port="$1"
+
+# ポートが数値かつ有効な範囲(1-65535)かチェック
+if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+  echo "エラー: ポートは 1〜65535 の数値で指定してください (指定値: $port)" >&2
+  exit 1
+fi
+
+# 実機(emulator以外で device 状態)のシリアルを取得
+serial=$(adb.exe devices | tr -d '\r' | awk '$2 == "device" && $1 !~ /^emulator-/ { print $1 }')
+
+# デバイスが見つからない / 複数ある場合のチェック
+count=$(echo "$serial" | grep -c . || true)
+if [ "$count" -eq 0 ]; then
+  echo "エラー: 実機が見つかりません" >&2
+  adb.exe devices >&2
+  exit 1
+elif [ "$count" -gt 1 ]; then
+  echo "エラー: 実機が複数あります。1台に絞ってください" >&2
+  echo "$serial" >&2
+  exit 1
+fi
+
+echo "対象デバイス: $serial"
+adb.exe -s "$serial" reverse "tcp:$port" "tcp:$port"
+echo "reverse tcp:$port (PC) -> tcp:$port (デバイス) を設定しました"
+
+# 現在の reverse 設定一覧を表示
+echo "--- 現在の reverse 設定 ---"
+adb.exe -s "$serial" reverse --list

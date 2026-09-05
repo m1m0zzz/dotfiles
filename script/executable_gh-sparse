@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# gh-sparse - GitHub リポジトリから特定ディレクトリだけを取得する
+#
+# Usage:
+#   ./gh-sparse <url|owner/repo> <path>
+#
+# Example:
+#   ./gh-sparse https://github.com/user/repo.git path/to/directory
+#   ./gh-sparse user/repo path/to/directory
+#
+
+set -euo pipefail
+
+# --- 使い方の表示 ---
+usage() {
+  cat <<EOF
+gh-sparse - GitHub リポジトリから特定ディレクトリだけを取得する
+
+Usage:
+  $(basename "$0") <url|owner/repo> <path>
+  $(basename "$0") -h | --help
+
+Arguments:
+  url|owner/repo  リポジトリの URL、または owner/repo 形式の指定
+  path            取得したいディレクトリのパス
+
+Examples:
+  $(basename "$0") https://github.com/user/repo.git path/to/directory
+  $(basename "$0") user/repo path/to/directory
+EOF
+}
+
+# --- --help / -h の処理 ---
+for arg in "$@"; do
+  case "$arg" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  esac
+done
+
+# --- 引数チェック ---
+if [ "$#" -ne 2 ]; then
+  usage >&2
+  exit 1
+fi
+
+repo_arg="$1"
+path="$2"
+
+# --- 第一引数を URL に正規化 ---
+# scheme (https://, git@ など) を含まず、かつ owner/repo 形式なら
+# GitHub の URL に組み立てる。それ以外はそのまま URL として扱う。
+if [[ "$repo_arg" == *"://"* || "$repo_arg" == git@* ]]; then
+  url="$repo_arg"
+elif [[ "$repo_arg" =~ ^[^/]+/[^/]+$ ]]; then
+  url="https://github.com/${repo_arg%.git}.git"
+else
+  echo "Error: 第一引数は URL または owner/repo 形式で指定してください: $repo_arg" >&2
+  exit 1
+fi
+
+# --- URL からリポジトリ名（=展開先ディレクトリ名）を抽出 ---
+# 末尾の .git を除去し、最後の / 以降を取り出す
+repo="$(basename "${url%.git}")"
+
+if [ -z "$repo" ]; then
+  echo "Error: URL からリポジトリ名を取得できませんでした: $url" >&2
+  exit 1
+fi
+
+if [ -e "$repo" ]; then
+  echo "Error: ディレクトリ '$repo' は既に存在します。" >&2
+  exit 1
+fi
+
+# --- 実行 ---
+git clone --filter=blob:none --no-checkout --depth=1 --sparse "$url"
+cd "$repo"
+git sparse-checkout set "$path"
+git checkout
+
+echo
+echo "Done: $repo/$path を取得しました。"

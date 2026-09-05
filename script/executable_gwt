@@ -1,0 +1,457 @@
+#!/usr/bin/env bash
+#
+# gwt - git worktree 管理スクリプト
+#
+# 使い方と環境変数は `gwt --help` (usage 関数) を参照。
+# ここに書き写すと二重管理になるため、説明は usage() に集約している。
+
+set -euo pipefail
+
+# ============================================================
+# 設定
+#   OPEN_CMD: add 後にワークツリーを開くコマンド。
+#             既定の "cd" は特別扱いで、呼び出し元シェルをワークツリーへ
+#             移動させる (gwt shell-init のラッパーが必要。open_worktree 参照)。
+#             code / zed などを指定すればそのコマンドに渡す。"" なら作成のみ。
+#   POST_ADD: add 後にワークツリー内で実行するコマンド。
+#             ワークツリーには node_modules などが無いため、
+#             'npm ci' のようなセットアップをここで流す。
+# ============================================================
+#   ":-" ではなく "-" を使う。GWT_OPEN_CMD="" は「開かない」を意味するので、
+#   空文字を既定値で埋めてはいけない (未設定のときだけ cd にする)。
+OPEN_CMD="${GWT_OPEN_CMD-cd}"
+POST_ADD="${GWT_POST_ADD:-}"
+
+# このスクリプト自身の絶対パス (shell-init が出力するラッパーが呼ぶ実体)
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+if command -v realpath >/dev/null 2>&1; then
+  SCRIPT_PATH="$(realpath "$SCRIPT_PATH")"
+fi
+
+# require_repo が設定するリポジトリのトップレベル
+root=""
+
+# parse_opts の出力
+OPTS=()
+ARGS=()
+
+# ============================================================
+# 共通ヘルパ
+# ============================================================
+
+die() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+warn() {
+  echo "Warning: $*" >&2
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  gwt                       このヘルプを表示
+  gwt list | ls             ワークツリー一覧を表示 (git worktree list)
+  gwt add [--no-open] <branch-name>
+                            origin から default を fetch し、そこから新規ブランチを
+                            作成してワークツリーを追加
+                            (既存ブランチなら fetch せず再利用)
+  gwt path <branch>         ブランチに対応するワークツリーのパスを出力
+  gwt rm | remove [-f] <branch>
+                            default にマージ済みならワークツリーとブランチを削除
+                            (-f で未マージでも強制削除)
+  gwt shell-init [bash|zsh] cd 用のシェル関数を出力する
+                            .bashrc / .zshrc に eval "$(gwt shell-init)" を追加する
+
+Env:
+  GWT_OPEN_CMD              add 後に開くコマンド (既定: cd, "" で開かない)
+                            "cd" は作成したワークツリーへ移動する特別値
+                            (shell-init のシェル関数が必要)
+  GWT_POST_ADD              add 後にワークツリー内で実行するコマンド
+                            (例: 'npm ci'。失敗しても警告のみ)
+EOF
+}
+
+# オプション解析。認識したフラグを OPTS に、残りの引数を ARGS に入れる。
+#   第1引数は受け付けるフラグの仕様。"--force|-f --no-open" のように
+#   空白区切りで並べ、別名は | でつなぐ。OPTS には別名を先頭 (正式名) に
+#   正規化して入れるので、呼び出し側は has_opt --force だけを見ればよい。
+parse_opts() {
+  local spec="$1"
+  shift
+
+  OPTS=()
+  ARGS=()
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --)
+      shift
+      break
+      ;;
+    -*)
+      local group canonical matched=0
+      for group in $spec; do
+        canonical="${group%%|*}"
+        case "|${group}|" in
+        *"|$1|"*)
+          OPTS+=("$canonical")
+          matched=1
+          break
+          ;;
+        esac
+      done
+      [ "$matched" -eq 1 ] || die "不明なオプション '$1'"
+      shift
+      ;;
+    *)
+      break
+      ;;
+    esac
+  done
+
+  ARGS=("$@")
+}
+
+# parse_opts が立てたフラグ (正式名で指定) が指定されたか
+has_opt() {
+  local want="$1" opt
+  for opt in ${OPTS[@]+"${OPTS[@]}"}; do
+    [ "$opt" = "$want" ] && return 0
+  done
+  return 1
+}
+
+# ブランチ名の引数がちょうど 1 個あることを確認し、標準出力に返す
+#   第1引数は失敗時に表示する Usage 行
+require_branch_arg() {
+  local usage_line="$1"
+  shift
+  if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+    echo "Usage: ${usage_line}" >&2
+    exit 1
+  fi
+  printf '%s\n' "$1"
+}
+
+# git のトップレベルを取得してグローバル $root に設定する
+require_repo() {
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" ||
+    die "git リポジトリの中ではありません"
+}
+
+# デフォルトブランチ判定: origin/HEAD -> ローカル main/master の順
+detect_default_branch() {
+  local d b
+  if d="$(git -C "$root" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; then
+    printf '%s\n' "${d#origin/}"
+    return 0
+  fi
+  for b in main master; do
+    if git -C "$root" show-ref --verify --quiet "refs/heads/${b}"; then
+      printf '%s\n' "$b"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# デフォルトブランチ名を出力する。特定できなければ終了する
+#   (fetch / 分岐元 / マージ判定の基準に必須)
+require_default_branch() {
+  detect_default_branch || die "デフォルトブランチを特定できません"
+}
+
+# 指定ブランチがチェックアウトされているワークツリーのパスを出力する
+# 見つからなければ何も出力せず非ゼロ終了
+worktree_path_for_branch() {
+  local target="$1"
+  git -C "$root" worktree list --porcelain |
+    awk -v target="refs/heads/${target}" '
+        /^worktree /  { path = substr($0, 10) }
+        /^branch /    { if ($2 == target) { print path; found = 1; exit } }
+        END           { if (!found) exit 1 }
+      '
+}
+
+# ブランチに対応するワークツリーのパスを出力する。無ければ終了する
+require_worktree_path() {
+  local branch="$1"
+  worktree_path_for_branch "$branch" ||
+    die "ブランチ '${branch}' に対応するワークツリーが見つかりません"
+}
+
+# メイン(ルート)ワークツリーのパスを出力する
+#   git worktree list はメインワークツリーを必ず先頭に出力する仕様
+main_worktree_path() {
+  git -C "$root" worktree list --porcelain |
+    awk '/^worktree /{ print substr($0, 10); exit }'
+}
+
+# ブランチが存在することを確認する
+require_branch_exists() {
+  local branch="$1"
+  git -C "$root" show-ref --verify --quiet "refs/heads/${branch}" ||
+    die "ブランチ '${branch}' が存在しません"
+}
+
+# origin から default ブランチを取り込み、リモート追跡 ref を更新する
+#   明示的な refspec を渡すのは、リモートの refspec 設定に依存せず
+#   refs/remotes/origin/<default> を確実に更新するため。
+#   pull ではなく fetch なので、どのワークツリーの作業ツリーにも触らない。
+fetch_default_branch() {
+  local default_branch="$1"
+  echo "origin から取得します: git fetch origin ${default_branch}"
+  git -C "$root" fetch origin \
+    "+refs/heads/${default_branch}:refs/remotes/origin/${default_branch}" ||
+    die "origin/${default_branch} の取得に失敗しました (オフライン / origin が無い)"
+}
+
+# ブランチ名をディレクトリ名向けにサニタイズして出力する
+#   英数字 . _ - 以外を - に置換し、連続/前後の - を整理
+sanitize_branch() {
+  local branch="$1" sanitized
+  sanitized="$(printf '%s' "$branch" |
+    sed -E 's#[^A-Za-z0-9._-]#-#g; s#-+#-#g; s#^-+##; s#-+$##')"
+  [ -n "$sanitized" ] ||
+    die "ブランチ名 '${branch}' からディレクトリ名を生成できません"
+  printf '%s\n' "$sanitized"
+}
+
+# 作成したワークツリーを OPEN_CMD に従って開く
+#   OPEN_CMD が "cd" のときは shell-init のシェル関数と連携する。
+#   子プロセスから呼び出し元シェルの cwd は変えられないため、
+#   ラッパーが渡してくる一時ファイル ($GWT_CD_FILE) に移動先を書き、
+#   ラッパー側で cd してもらう。
+open_worktree() {
+  local dir="$1"
+  case "$OPEN_CMD" in
+  "")
+    : # 作成のみ
+    ;;
+  cd)
+    if [ -n "${GWT_CD_FILE:-}" ]; then
+      printf '%s\n' "$dir" >"$GWT_CD_FILE"
+    else
+      warn 'シェル関数が未導入のため cd できません。.bashrc / .zshrc に eval "$(gwt shell-init)" を追加してください。'
+    fi
+    ;;
+  *)
+    if command -v "$OPEN_CMD" >/dev/null 2>&1; then
+      "$OPEN_CMD" "$dir"
+    else
+      warn "'${OPEN_CMD}' コマンドが見つかりません。"
+    fi
+    ;;
+  esac
+}
+
+# ============================================================
+# サブコマンド: list
+# ============================================================
+cmd_list() {
+  require_repo
+  # 手で消されたワークツリーの管理エントリが残り続けるため先に掃除する
+  git -C "$root" worktree prune
+  git -C "$root" worktree list
+}
+
+# ============================================================
+# サブコマンド: path
+#   スクリプトから cd "$(gwt path <branch>)" と書けるようにする
+# ============================================================
+cmd_path() {
+  local branch
+  branch="$(require_branch_arg "gwt path <branch-name>" "$@")"
+
+  require_repo
+  require_worktree_path "$branch"
+}
+
+# ============================================================
+# サブコマンド: add (旧 gwt <branch> の挙動)
+# ============================================================
+cmd_add() {
+  parse_opts "--no-open" "$@"
+  local branch
+  branch="$(require_branch_arg \
+    "gwt add [--no-open] <branch-name>" ${ARGS[@]+"${ARGS[@]}"})"
+
+  require_repo
+
+  local default_branch
+  default_branch="$(require_default_branch)"
+
+  # メイン(ルート)ワークツリーを特定
+  #   ディレクトリ名の基準はメインワークツリーでなければならない。
+  #   $root は「今いる」ワークツリーなので、ワークツリーの中から add すると
+  #   <repo>_<branch>_<新ブランチ> のように名前が入れ子になってしまう。
+  local main_wt
+  main_wt="$(main_worktree_path || true)"
+  [ -n "$main_wt" ] || die "メインワークツリーを特定できません"
+
+  # メインワークツリーの兄弟位置に <root_name>_<sanitized> を作成
+  local dir
+  dir="$(dirname "$main_wt")/$(basename "$main_wt")_$(sanitize_branch "$branch")"
+
+  [ -e "$dir" ] && die "'${dir}' は既に存在します"
+
+  if git -C "$root" show-ref --verify --quiet "refs/heads/${branch}"; then
+    # 既存ブランチは分岐元が無関係なため fetch しない (ブランチ位置を動かさない)
+    echo "既存ブランチ '${branch}' でワークツリーを作成します"
+    git -C "$root" worktree add "$dir" "$branch"
+  else
+    # 新規ブランチは最新の default から生やす。
+    #   pull ではなく fetch + origin/<default> を使うので、
+    #   メインワークツリーが何をチェックアウトしていても、dirty でも動く。
+    fetch_default_branch "$default_branch"
+    echo "新規ブランチ '${branch}' を 'origin/${default_branch}' から作成してワークツリーを作成します"
+    #   --no-track は必須。リモート追跡 ref から生やすと既定で upstream が
+    #   origin/<default> に設定され、そのブランチでの pull が default を
+    #   取り込んでしまう。
+    git -C "$root" worktree add --no-track -b "$branch" "$dir" \
+      "origin/${default_branch}"
+  fi
+
+  echo "作成しました: ${dir}"
+
+  # 作成後コマンド (node_modules など、ワークツリーに引き継がれないもののセットアップ)
+  if [ -n "$POST_ADD" ]; then
+    echo "作成後コマンドを実行します: ${POST_ADD}"
+    if ! (cd "$dir" && bash -c "$POST_ADD"); then
+      warn "作成後コマンドが失敗しました: ${POST_ADD}"
+    fi
+  fi
+
+  has_opt --no-open || open_worktree "$dir"
+}
+
+# ============================================================
+# サブコマンド: rm / remove
+#   デフォルトブランチにマージ済みの場合のみ、
+#   ワークツリーとローカルブランチを削除する。
+#   -f を付けると、マージ判定と未コミット変更のチェックを飛ばして強制削除する
+#   (squash merge されたブランチや、捨てる実験ブランチ向け)。
+# ============================================================
+cmd_remove() {
+  parse_opts "--force|-f" "$@"
+  local branch force=0
+  branch="$(require_branch_arg \
+    "gwt rm [-f] <branch-name>" ${ARGS[@]+"${ARGS[@]}"})"
+  has_opt --force && force=1
+
+  require_repo
+  require_branch_exists "$branch"
+
+  local default_branch
+  default_branch="$(require_default_branch)"
+
+  # デフォルトブランチ自体は削除しない
+  [ "$branch" = "$default_branch" ] &&
+    die "デフォルトブランチ '${branch}' は削除できません"
+
+  local wt_path
+  wt_path="$(require_worktree_path "$branch")"
+
+  # 削除対象ワークツリー内にいる場合は中止
+  case "$PWD/" in
+  "$wt_path"/*)
+    die "削除対象のワークツリー内にいます。外に移動してから実行してください: ${wt_path}"
+    ;;
+  esac
+
+  if [ "$force" -eq 1 ]; then
+    warn "-f が指定されたため、マージ判定と未コミット変更のチェックを飛ばします"
+  else
+    # origin/default を最新化してからマージ判定する
+    #   (ローカルが古いことによるマージ誤判定を防ぐ)
+    fetch_default_branch "$default_branch"
+
+    # マージ判定: branch が origin/default_branch の先祖か
+    #   注: git branch --merged 相当。squash merge は検出できない。
+    if ! git -C "$root" merge-base --is-ancestor \
+      "$branch" "origin/${default_branch}"; then
+      echo "Error: ブランチ '${branch}' は 'origin/${default_branch}' にマージされていません" >&2
+      die "(squash merge は検出できません。承知の上なら -f を付けてください)"
+    fi
+  fi
+
+  # ワークツリー削除
+  #   通常は --force を付けない (未コミット変更があれば失敗させる)
+  echo "ワークツリーを削除します: ${wt_path}"
+  local remove_args=(worktree remove)
+  [ "$force" -eq 1 ] && remove_args+=(--force)
+  git -C "$root" "${remove_args[@]}" "$wt_path" ||
+    die "ワークツリーの削除に失敗しました (未コミット/未追跡の変更がある可能性があります)"
+
+  # ブランチ削除
+  #   マージ済みであることは上で自前に検証済みなので -D を使う。
+  #   -d は「現在の HEAD にマージ済みか」を見るため、
+  #   どのブランチから実行したかに結果が左右されてしまう。
+  echo "ブランチを削除します: ${branch}"
+  git -C "$root" branch -D "$branch" ||
+    die "ブランチ '${branch}' の削除に失敗しました (ワークツリーは削除済み)"
+
+  echo "削除しました: ワークツリー '${wt_path}' / ブランチ '${branch}'"
+}
+
+# ============================================================
+# サブコマンド: shell-init
+#   gwt をシェル関数でラップし、add 後に呼び出し元シェルを
+#   ワークツリーへ cd させる (子プロセスでは親の cwd を変えられないため)。
+#   一時ファイル経由で移動先を受け取るので、通常の出力は汚さない。
+# ============================================================
+cmd_shell_init() {
+  local shell_name="${1:-bash}"
+  case "$shell_name" in
+  bash | zsh) ;;
+  *) die "shell-init が対応していないシェルです: '${shell_name}' (bash / zsh)" ;;
+  esac
+
+  local quoted_path
+  quoted_path="$(printf '%q' "$SCRIPT_PATH")"
+
+  cat <<EOF
+gwt() {
+  local _gwt_cd_file _gwt_status _gwt_dest
+  _gwt_cd_file="\$(mktemp "\${TMPDIR:-/tmp}/gwt-cd.XXXXXX")" || return 1
+  GWT_CD_FILE="\$_gwt_cd_file" ${quoted_path} "\$@"
+  _gwt_status=\$?
+  _gwt_dest="\$(cat "\$_gwt_cd_file" 2>/dev/null || true)"
+  rm -f "\$_gwt_cd_file"
+  if [ -n "\$_gwt_dest" ] && [ -d "\$_gwt_dest" ]; then
+    cd "\$_gwt_dest" || return 1
+  fi
+  return \$_gwt_status
+}
+EOF
+}
+
+# ============================================================
+# ディスパッチ
+# ============================================================
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+subcmd="$1"
+shift
+
+case "$subcmd" in
+list | ls) cmd_list "$@" ;;
+add) cmd_add "$@" ;;
+path) cmd_path "$@" ;;
+rm | remove) cmd_remove "$@" ;;
+shell-init) cmd_shell_init "$@" ;;
+-h | --help | help)
+  usage
+  exit 0
+  ;;
+*)
+  echo "Error: 不明なサブコマンド '${subcmd}'" >&2
+  usage >&2
+  exit 1
+  ;;
+esac

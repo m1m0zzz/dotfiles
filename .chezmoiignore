@@ -1,0 +1,10 @@
+README.md
+CLAUDE.md
+
+# 認証情報・秘密鍵を含むためchezmoi管理対象から除外
+.ssh
+.aws
+.azure
+.docker
+.npmrc
+.claude/.credentials.json

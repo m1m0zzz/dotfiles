@@ -1,0 +1,406 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+# ============================================================
+# claude-auto
+#
+# Claude Code の session limit を Herdr 経由で監視し、
+#
+#   You've hit your session limit · resets 11:20am (Asia/Tokyo)
+#
+# のような表示を検出したら、
+# reset 時刻 + 1分後に
+#
+#   続けて
+#
+# と入力して Enter を送信する。
+#
+# 想定環境:
+#   Windows Terminal
+#     └─ WSL
+#         └─ Herdr
+#             └─ claude-auto
+#                 └─ Claude Code
+#
+# ~/.bashrc で以下の alias を設定可能:
+#
+#   alias claude='claude-auto'
+#
+# ============================================================
+
+# ------------------------------------------------------------
+# 設定
+# ------------------------------------------------------------
+
+# Claude Code のリセット表示のタイムゾーン
+TIMEZONE="Asia/Tokyo"
+
+# リセット時刻から何秒後に「続けて」を送るか
+CONTINUE_DELAY=60
+
+# Herdr の画面を監視する間隔
+POLL_INTERVAL=2
+
+# session limit の表示が何回連続で消えたら
+# 予約をキャンセルするか
+MISSING_THRESHOLD=3
+
+# ログ
+LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
+LOG_FILE="$LOG_DIR/claude-auto.log"
+
+# ------------------------------------------------------------
+# ユーティリティ
+# ------------------------------------------------------------
+
+log() {
+  mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+  printf '[%s] %s\n' \
+    "$(TZ="$TIMEZONE" date '+%Y-%m-%d %H:%M:%S')" \
+    "$*" \
+    >>"$LOG_FILE"
+}
+
+die() {
+  printf 'claude-auto: %s\n' "$*" >&2
+  exit 1
+}
+
+# ------------------------------------------------------------
+# 必要コマンドの確認
+# ------------------------------------------------------------
+
+command -v herdr >/dev/null 2>&1 ||
+  die "herdr が見つかりません。"
+
+command -v date >/dev/null 2>&1 ||
+  die "date が見つかりません。"
+
+# ------------------------------------------------------------
+# Claude Code 本体を取得
+#
+# type -P は alias や shell function ではなく、
+# PATH 上にある実際の executable を検索する。
+#
+# そのため、
+#
+#   alias claude='claude-auto'
+#
+# としても claude-auto -> claude-auto の再帰にはならない。
+# ------------------------------------------------------------
+
+CLAUDE_BIN="$(type -P claude 2>/dev/null || true)"
+
+if [[ -z "$CLAUDE_BIN" ]]; then
+  die "Claude Code の実行ファイル 'claude' が見つかりません。"
+fi
+
+# ------------------------------------------------------------
+# Herdr 内であることを確認
+# ------------------------------------------------------------
+
+if [[ -z "${HERDR_PANE_ID:-}" ]]; then
+  die "Herdr のペイン内で実行してください。HERDR_PANE_ID がありません。"
+fi
+
+PANE_ID="$HERDR_PANE_ID"
+
+# ------------------------------------------------------------
+# 12時間表記の reset 時刻から Unix time を計算
+#
+# 引数:
+#   $1 hour
+#   $2 minute
+#   $3 am / pm
+#
+# stdout:
+#   "<reset_epoch> <target_epoch>"
+# ------------------------------------------------------------
+
+calculate_reset_time() {
+  local hour="$1"
+  local minute="$2"
+  local ampm="${3,,}"
+
+  local hour24
+  local now
+  local today
+  local reset
+  local target
+  local time_string
+
+  # 12時間表記 → 24時間表記
+  hour24=$((10#$hour % 12))
+
+  if [[ "$ampm" == "pm" ]]; then
+    hour24=$((hour24 + 12))
+  fi
+
+  time_string="$(printf '%02d:%02d' "$hour24" "$((10#$minute))")"
+
+  now="$(TZ="$TIMEZONE" date +%s)"
+  today="$(TZ="$TIMEZONE" date +%Y-%m-%d)"
+
+  reset="$(
+    TZ="$TIMEZONE" \
+      date -d "$today $time_string" +%s 2>/dev/null
+  )" || return 1
+
+  target=$((reset + CONTINUE_DELAY))
+
+  # reset 時刻がすでに大幅に過去なら、
+  # 表示されている時刻は翌日のものと判断する。
+  #
+  # 例:
+  #
+  #   現在 23:00
+  #   resets 1:20am
+  #
+  # → 翌日の 01:20
+  #
+  # 一方、
+  #
+  #   現在 11:20:30
+  #   resets 11:20am
+  #
+  # の場合は当日のまま扱う。
+  if ((target < now - 300)); then
+    reset="$(
+      TZ="$TIMEZONE" \
+        date -d "tomorrow $time_string" +%s 2>/dev/null
+    )" || return 1
+
+    target=$((reset + CONTINUE_DELAY))
+  fi
+
+  # 1分後の時刻をわずかに過ぎて検出した場合は
+  # 即時実行できるようにする。
+  if ((target < now)); then
+    target="$now"
+  fi
+
+  printf '%s %s\n' "$reset" "$target"
+}
+
+# ------------------------------------------------------------
+# Claude Code に「続けて」を送信
+# ------------------------------------------------------------
+
+send_continue() {
+  log "sending: 続けて"
+
+  if ! herdr pane send-text "$PANE_ID" "続けて" \
+    >/dev/null 2>&1; then
+    log "ERROR: pane send-text failed"
+    return 1
+  fi
+
+  # テキスト入力と Enter の間にごく短い間隔を置く。
+  sleep 0.1
+
+  if ! herdr pane send-keys "$PANE_ID" enter \
+    >/dev/null 2>&1; then
+    log "ERROR: pane send-keys enter failed"
+    return 1
+  fi
+
+  log "sent: 続けて"
+  return 0
+}
+
+# ------------------------------------------------------------
+# Session limit watcher
+# ------------------------------------------------------------
+
+watch_session_limit() {
+  local screen
+  local flat_screen
+
+  local hour
+  local minute
+  local ampm
+
+  local times
+  local reset_epoch
+  local target_epoch
+  local now
+
+  local scheduled_reset=""
+  local scheduled_target=""
+  local handled_reset=""
+
+  local current_reset=""
+  local missing_count=0
+
+  # Claude Code の表示例:
+  #
+  # You've hit your session limit · resets 11:20am (Asia/Tokyo)
+  #
+  # Terminal 幅によって途中で折り返される可能性があるため、
+  # visible screen の改行をスペースへ変換してから判定する。
+  local limit_regex
+  limit_regex="You've hit your session limit.*resets[[:space:]]+([0-9]{1,2}):([0-9]{2})([aApP][mM])[[:space:]]+\(Asia/Tokyo\)"
+
+  log "watcher started: pane=$PANE_ID"
+
+  while true; do
+
+    # ----------------------------------------------------
+    # 現在の Herdr pane を取得
+    # ----------------------------------------------------
+
+    screen="$(
+      herdr pane read "$PANE_ID" \
+        --source visible \
+        2>/dev/null
+    )"
+
+    if [[ $? -ne 0 ]]; then
+      log "WARN: failed to read pane"
+      sleep "$POLL_INTERVAL"
+      continue
+    fi
+
+    # Terminal の soft wrap 対策。
+    flat_screen="${screen//$'\n'/ }"
+
+    current_reset=""
+
+    # ----------------------------------------------------
+    # session limit を検出
+    # ----------------------------------------------------
+
+    if [[ "$flat_screen" =~ $limit_regex ]]; then
+
+      hour="${BASH_REMATCH[1]}"
+      minute="${BASH_REMATCH[2]}"
+      ampm="${BASH_REMATCH[3]}"
+
+      times="$(
+        calculate_reset_time \
+          "$hour" \
+          "$minute" \
+          "$ampm"
+      )"
+
+      if [[ $? -eq 0 ]]; then
+
+        read -r reset_epoch target_epoch <<<"$times"
+
+        current_reset="$reset_epoch"
+        missing_count=0
+
+        # --------------------------------------------
+        # 新しい session limit なら予約
+        # --------------------------------------------
+
+        if [[ "$reset_epoch" != "$handled_reset" ]] &&
+          [[ "$reset_epoch" != "$scheduled_reset" ]]; then
+
+          scheduled_reset="$reset_epoch"
+          scheduled_target="$target_epoch"
+
+          log "session limit detected"
+          log "reset:  $(TZ="$TIMEZONE" date -d "@$reset_epoch" '+%Y-%m-%d %H:%M:%S')"
+          log "resume: $(TZ="$TIMEZONE" date -d "@$target_epoch" '+%Y-%m-%d %H:%M:%S')"
+        fi
+      fi
+
+    else
+
+      # ------------------------------------------------
+      # session-limit 画面が消えた
+      # ------------------------------------------------
+
+      if [[ -n "$scheduled_reset" ]]; then
+        missing_count=$((missing_count + 1))
+
+        # 一時的な TUI 再描画ではキャンセルしない。
+        if ((missing_count >= MISSING_THRESHOLD)); then
+          log "session limit disappeared; schedule cancelled"
+
+          scheduled_reset=""
+          scheduled_target=""
+          missing_count=0
+        fi
+      fi
+    fi
+
+    # ----------------------------------------------------
+    # 指定時刻になったか確認
+    # ----------------------------------------------------
+
+    if [[ -n "$scheduled_target" ]]; then
+
+      now="$(TZ="$TIMEZONE" date +%s)"
+
+      if ((now >= scheduled_target)); then
+
+        # session-limit の画面が「今も」表示されている
+        # 場合だけ送信する。
+        #
+        # これにより、ユーザーが先に手動で再開した場合に
+        # 作業中の Claude へ突然「続けて」を送ることを防ぐ。
+        if [[ "$current_reset" == "$scheduled_reset" ]]; then
+
+          if send_continue; then
+            handled_reset="$scheduled_reset"
+
+            scheduled_reset=""
+            scheduled_target=""
+            missing_count=0
+          else
+            # 入力に失敗した場合は次の poll で再試行する。
+            log "send failed; retrying"
+          fi
+        fi
+      fi
+    fi
+
+    sleep "$POLL_INTERVAL"
+  done
+}
+
+# ------------------------------------------------------------
+# watcher 起動
+# ------------------------------------------------------------
+
+watch_session_limit &
+WATCHER_PID=$!
+
+# ------------------------------------------------------------
+# 終了処理
+# ------------------------------------------------------------
+
+cleanup() {
+  local status=$?
+
+  if kill -0 "$WATCHER_PID" 2>/dev/null; then
+    kill "$WATCHER_PID" 2>/dev/null || true
+    wait "$WATCHER_PID" 2>/dev/null || true
+  fi
+
+  log "watcher stopped"
+
+  return "$status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+# ------------------------------------------------------------
+# Claude Code 起動
+# ------------------------------------------------------------
+
+log "Claude Code starting: $CLAUDE_BIN"
+
+"$CLAUDE_BIN" "$@"
+CLAUDE_STATUS=$?
+
+log "Claude Code exited: status=$CLAUDE_STATUS"
+
+exit "$CLAUDE_STATUS"

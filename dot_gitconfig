@@ -1,0 +1,47 @@
+[user]
+	name = m1m0zzz
+	email = 117814895+m1m0zzz@users.noreply.github.com
+[init]
+	defaultBranch = main
+[core]
+	editor = code --wait
+[sequence]
+	editor = code --wait
+[pull]
+	rebase = true
+[credential "https://github.com"]
+	helper =
+	helper = !/usr/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/usr/bin/gh auth git-credential
+# AIが gh auth login の認証情報からpushできるように ssh ではなく https を使うようにする
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+[fetch]
+	prune = true
+	pruneTags = true
+[push]
+	autoSetupRemote = true
+[merge]
+	conflictStyle = zdiff3
+[rebase]
+	updateRefs = true
+	autoStash = true
+	autosquash = true
+[rerere]
+	enabled = true
+	autoUpdate = true
+[diff]
+	algorithm = histogram
+	colorMoved = default
+	mnemonicPrefix = true
+	renames = copies
+[branch]
+	sort = -committerdate
+[tag]
+	sort = version:refname
+[column]
+	ui = auto
+[commit]
+	verbose = true

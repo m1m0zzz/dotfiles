@@ -1,0 +1,23 @@
+onboarding = false
+[ui]
+agent_panel_sort = "spaces"
+
+[keys]
+new_tab = ["prefix+c", "ctrl+t"]
+close_tab = ["prefix+shift+x", "ctrl+w"]
+new_workspace = ["prefix+shift+n", "ctrl+n"]
+
+[[keys.command]]
+key = "prefix+o"
+type = "pane"
+command = '''
+repo="$(ghq list -p | fzf --prompt='space> ')" || exit 0
+[ -n "$repo" ] || exit 0
+
+herdr_bin="${HERDR_BIN_PATH:-herdr}"
+label="$(basename "$repo")"
+
+"$herdr_bin" workspace create --cwd "$repo" --label "$label" --focus
+'''
+description = "open ghq space"
+

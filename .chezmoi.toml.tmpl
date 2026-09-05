@@ -1,0 +1,6 @@
+{{- /* Windows のユーザー名（/mnt/c/Users/<name>）。リポジトリには含めず、
+       init 時に受け取って ~/.config/chezmoi/chezmoi.toml へ保存する */ -}}
+{{- $winuser := promptStringOnce . "winuser" "winuser" -}}
+
+[data]
+    winuser = {{ $winuser | quote }}
