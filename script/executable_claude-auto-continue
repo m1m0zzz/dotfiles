@@ -3,7 +3,7 @@
 set -uo pipefail
 
 # ============================================================
-# claude-auto
+# claude-auto-continue
 #
 # Claude Code の session limit を Herdr 経由で監視し、
 #
@@ -17,15 +17,13 @@ set -uo pipefail
 # と入力して Enter を送信する。
 #
 # 想定環境:
-#   Windows Terminal
-#     └─ WSL
-#         └─ Herdr
-#             └─ claude-auto
-#                 └─ Claude Code
+# * Windows Terminal
+# * WSL
+# * Herdr
 #
 # ~/.bashrc で以下の alias を設定可能:
 #
-#   alias claude='claude-auto'
+#   alias claude='claude-auto-continue'
 #
 # ============================================================
 
@@ -48,7 +46,7 @@ MISSING_THRESHOLD=3
 
 # ログ
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
-LOG_FILE="$LOG_DIR/claude-auto.log"
+LOG_FILE="$LOG_DIR/claude-auto-continue.log"
 
 # ------------------------------------------------------------
 # ユーティリティ
@@ -64,7 +62,7 @@ log() {
 }
 
 die() {
-  printf 'claude-auto: %s\n' "$*" >&2
+  printf 'claude-auto-continue: %s\n' "$*" >&2
   exit 1
 }
 
@@ -84,11 +82,7 @@ command -v date >/dev/null 2>&1 ||
 # type -P は alias や shell function ではなく、
 # PATH 上にある実際の executable を検索する。
 #
-# そのため、
-#
-#   alias claude='claude-auto'
-#
-# としても claude-auto -> claude-auto の再帰にはならない。
+# そのため、 alias claude='claude-auto-continue' としても再帰にはならない
 # ------------------------------------------------------------
 
 CLAUDE_BIN="$(type -P claude 2>/dev/null || true)"
