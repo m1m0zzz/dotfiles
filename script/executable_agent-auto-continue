@@ -133,6 +133,7 @@ PANE_ID="$HERDR_PANE_ID"
 #   $1 hour
 #   $2 minute
 #   $3 am / pm
+#   $4 date (optional, e.g. "Sep 11, 2026")
 #
 # stdout:
 #   "<reset_epoch> <target_epoch>"
@@ -142,6 +143,7 @@ calculate_reset_time() {
   local hour="$1"
   local minute="$2"
   local ampm="${3,,}"
+  local reset_date="${4:-}"
 
   local hour24
   local now
@@ -160,16 +162,24 @@ calculate_reset_time() {
   time_string="$(printf '%02d:%02d' "$hour24" "$((10#$minute))")"
 
   now="$(TZ="$TIMEZONE" date +%s)"
-  today="$(TZ="$TIMEZONE" date +%Y-%m-%d)"
 
-  reset="$(
-    TZ="$TIMEZONE" \
-      date -d "$today $time_string" +%s 2>/dev/null
-  )" || return 1
+  if [[ -n "$reset_date" ]]; then
+    reset="$(
+      TZ="$TIMEZONE" \
+        date -d "$reset_date $time_string" +%s 2>/dev/null
+    )" || return 1
+  else
+    today="$(TZ="$TIMEZONE" date +%Y-%m-%d)"
+
+    reset="$(
+      TZ="$TIMEZONE" \
+        date -d "$today $time_string" +%s 2>/dev/null
+    )" || return 1
+  fi
 
   target=$((reset + CONTINUE_DELAY))
 
-  # reset 時刻がすでに大幅に過去なら、
+  # 日付が表示されておらず、reset 時刻がすでに大幅に過去なら、
   # 表示されている時刻は翌日のものと判断する。
   #
   # 例:
@@ -185,7 +195,7 @@ calculate_reset_time() {
   #   resets 11:20am
   #
   # の場合は当日のまま扱う。
-  if ((target < now - 300)); then
+  if [[ -z "$reset_date" ]] && ((target < now - 300)); then
     reset="$(
       TZ="$TIMEZONE" \
         date -d "tomorrow $time_string" +%s 2>/dev/null
@@ -194,8 +204,7 @@ calculate_reset_time() {
     target=$((reset + CONTINUE_DELAY))
   fi
 
-  # 1分後の時刻をわずかに過ぎて検出した場合は
-  # 即時実行できるようにする。
+  # 再開予定時刻を過ぎて検出した場合は即時実行できるようにする。
   if ((target < now)); then
     target="$now"
   fi
@@ -240,6 +249,9 @@ watch_session_limit() {
   local hour
   local minute
   local ampm
+  local month
+  local day
+  local year
 
   local times
   local reset_epoch
@@ -256,6 +268,7 @@ watch_session_limit() {
   # Terminal 幅によって途中で折り返される可能性があるため、
   # visible screen の改行をスペースへ変換してから判定する。
   local limit_regex
+  local dated_limit_regex=""
 
   case "$AGENT" in
     claude)
@@ -265,6 +278,9 @@ watch_session_limit() {
     codex)
       # You've hit your usage limit. ... try again at 6:21 AM.
       limit_regex="You've hit your usage limit\..*try again at[[:space:]]+([0-9]{1,2}):([0-9]{2})[[:space:]]+([aApP][mM])\."
+
+      # You've hit your usage limit. ... try again at Sep 11th, 2026 1:52 AM.
+      dated_limit_regex="You've hit your usage limit\..*try again at[[:space:]]+([[:alpha:]]+)[[:space:]]+([0-9]{1,2})(st|nd|rd|th),[[:space:]]+([0-9]{4})[[:space:]]+([0-9]{1,2}):([0-9]{2})[[:space:]]+([aApP][mM])\."
       ;;
   esac
 
@@ -294,10 +310,30 @@ watch_session_limit() {
     current_reset=""
 
     # ----------------------------------------------------
-    # session limit を検出
+    # limit を検出
     # ----------------------------------------------------
 
-    if [[ "$flat_screen" =~ $limit_regex ]]; then
+    times=""
+
+    if [[ -n "$dated_limit_regex" ]] &&
+      [[ "$flat_screen" =~ $dated_limit_regex ]]; then
+
+      month="${BASH_REMATCH[1]}"
+      day="${BASH_REMATCH[2]}"
+      year="${BASH_REMATCH[4]}"
+      hour="${BASH_REMATCH[5]}"
+      minute="${BASH_REMATCH[6]}"
+      ampm="${BASH_REMATCH[7]}"
+
+      times="$(
+        calculate_reset_time \
+          "$hour" \
+          "$minute" \
+          "$ampm" \
+          "$month $day, $year"
+      )" || times=""
+
+    elif [[ "$flat_screen" =~ $limit_regex ]]; then
 
       hour="${BASH_REMATCH[1]}"
       minute="${BASH_REMATCH[2]}"
@@ -308,35 +344,35 @@ watch_session_limit() {
           "$hour" \
           "$minute" \
           "$ampm"
-      )"
+      )" || times=""
+    fi
 
-      if [[ $? -eq 0 ]]; then
+    if [[ -n "$times" ]]; then
 
-        read -r reset_epoch target_epoch <<<"$times"
+      read -r reset_epoch target_epoch <<<"$times"
 
-        current_reset="$reset_epoch"
-        missing_count=0
+      current_reset="$reset_epoch"
+      missing_count=0
 
-        # --------------------------------------------
-        # 新しい session limit なら予約
-        # --------------------------------------------
+      # --------------------------------------------
+      # 新しい limit なら予約
+      # --------------------------------------------
 
-        if [[ "$reset_epoch" != "$handled_reset" ]] &&
-          [[ "$reset_epoch" != "$scheduled_reset" ]]; then
+      if [[ "$reset_epoch" != "$handled_reset" ]] &&
+        [[ "$reset_epoch" != "$scheduled_reset" ]]; then
 
-          scheduled_reset="$reset_epoch"
-          scheduled_target="$target_epoch"
+        scheduled_reset="$reset_epoch"
+        scheduled_target="$target_epoch"
 
-          log "$AGENT limit detected"
-          log "reset:  $(TZ="$TIMEZONE" date -d "@$reset_epoch" '+%Y-%m-%d %H:%M:%S')"
-          log "resume: $(TZ="$TIMEZONE" date -d "@$target_epoch" '+%Y-%m-%d %H:%M:%S')"
-        fi
+        log "$AGENT limit detected"
+        log "reset:  $(TZ="$TIMEZONE" date -d "@$reset_epoch" '+%Y-%m-%d %H:%M:%S')"
+        log "resume: $(TZ="$TIMEZONE" date -d "@$target_epoch" '+%Y-%m-%d %H:%M:%S')"
       fi
 
     else
 
       # ------------------------------------------------
-      # session-limit 画面が消えた
+      # limit 画面が消えた
       # ------------------------------------------------
 
       if [[ -n "$scheduled_reset" ]]; then
@@ -344,7 +380,7 @@ watch_session_limit() {
 
         # 一時的な TUI 再描画ではキャンセルしない。
         if ((missing_count >= MISSING_THRESHOLD)); then
-          log "session limit disappeared; schedule cancelled"
+          log "limit disappeared; schedule cancelled"
 
           scheduled_reset=""
           scheduled_target=""
@@ -363,11 +399,11 @@ watch_session_limit() {
 
       if ((now >= scheduled_target)); then
 
-        # session-limit の画面が「今も」表示されている
+        # limit の画面が「今も」表示されている
         # 場合だけ送信する。
         #
         # これにより、ユーザーが先に手動で再開した場合に
-        # 作業中の Claude へ突然「続けて」を送ることを防ぐ。
+        # 作業中のエージェントへ突然「続けて」を送ることを防ぐ。
         if [[ "$current_reset" == "$scheduled_reset" ]]; then
 
           if send_continue; then
