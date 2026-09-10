@@ -5,7 +5,7 @@ herdr は AI エージェント向けのターミナルランタイム（tmux �
 
 - herdr の設定: `~/.config/herdr/config.toml` / リロードは `herdr server reload-config`
 - Windows Terminal の設定:
-  `/mnt/c/Users/sou/AppData/Local/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json`
+  `/mnt/c/Users/{{ .winuser }}/AppData/Local/Packages/Microsoft.WindowsTerminal_8wekyb3d8bbwe/LocalState/settings.json`
 
 ## キー入力の扱い
 
