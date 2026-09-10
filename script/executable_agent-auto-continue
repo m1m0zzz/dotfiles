@@ -3,9 +3,9 @@
 set -uo pipefail
 
 # ============================================================
-# claude-auto-continue
+# agent-auto-continue
 #
-# Claude Code の session limit を Herdr 経由で監視し、
+# Claude Code / Codex の利用制限を Herdr 経由で監視し、
 #
 #   You've hit your session limit · resets 11:20am (Asia/Tokyo)
 #
@@ -23,7 +23,8 @@ set -uo pipefail
 #
 # ~/.bashrc で以下の alias を設定可能:
 #
-#   alias claude='claude-auto-continue'
+#   alias claude='agent-auto-continue'
+#   alias codex='agent-auto-continue --agent codex'
 #
 # ============================================================
 
@@ -46,7 +47,7 @@ MISSING_THRESHOLD=3
 
 # ログ
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
-LOG_FILE="$LOG_DIR/claude-auto-continue.log"
+LOG_FILE="$LOG_DIR/agent-auto-continue.log"
 
 # ------------------------------------------------------------
 # ユーティリティ
@@ -62,9 +63,33 @@ log() {
 }
 
 die() {
-  printf 'claude-auto-continue: %s\n' "$*" >&2
+  printf 'agent-auto-continue: %s\n' "$*" >&2
   exit 1
 }
+
+# ------------------------------------------------------------
+# 起動対象
+# ------------------------------------------------------------
+
+# 引数なしの場合は従来どおり Claude Code。
+AGENT="claude"
+
+case "${1:-}" in
+  --agent)
+    [[ $# -ge 2 ]] || die "--agent には claude または codex を指定してください。"
+    AGENT="$2"
+    shift 2
+    ;;
+  --agent=*)
+    AGENT="${1#--agent=}"
+    shift
+    ;;
+esac
+
+case "$AGENT" in
+  claude | codex) ;;
+  *) die "未対応の agent です: $AGENT（claude または codex を指定してください）" ;;
+esac
 
 # ------------------------------------------------------------
 # 必要コマンドの確認
@@ -77,18 +102,18 @@ command -v date >/dev/null 2>&1 ||
   die "date が見つかりません。"
 
 # ------------------------------------------------------------
-# Claude Code 本体を取得
+# エージェント本体を取得
 #
 # type -P は alias や shell function ではなく、
 # PATH 上にある実際の executable を検索する。
 #
-# そのため、 alias claude='claude-auto-continue' としても再帰にはならない
+# そのため、alias 経由でこのスクリプトを呼び出しても再帰にはならない。
 # ------------------------------------------------------------
 
-CLAUDE_BIN="$(type -P claude 2>/dev/null || true)"
+AGENT_BIN="$(type -P "$AGENT" 2>/dev/null || true)"
 
-if [[ -z "$CLAUDE_BIN" ]]; then
-  die "Claude Code の実行ファイル 'claude' が見つかりません。"
+if [[ -z "$AGENT_BIN" ]]; then
+  die "実行ファイル '$AGENT' が見つかりません。"
 fi
 
 # ------------------------------------------------------------
@@ -179,7 +204,7 @@ calculate_reset_time() {
 }
 
 # ------------------------------------------------------------
-# Claude Code に「続けて」を送信
+# エージェントに「続けて」を送信
 # ------------------------------------------------------------
 
 send_continue() {
@@ -205,7 +230,7 @@ send_continue() {
 }
 
 # ------------------------------------------------------------
-# Session limit watcher
+# Limit watcher
 # ------------------------------------------------------------
 
 watch_session_limit() {
@@ -228,16 +253,22 @@ watch_session_limit() {
   local current_reset=""
   local missing_count=0
 
-  # Claude Code の表示例:
-  #
-  # You've hit your session limit · resets 11:20am (Asia/Tokyo)
-  #
   # Terminal 幅によって途中で折り返される可能性があるため、
   # visible screen の改行をスペースへ変換してから判定する。
   local limit_regex
-  limit_regex="You've hit your session limit.*resets[[:space:]]+([0-9]{1,2}):([0-9]{2})([aApP][mM])[[:space:]]+\(Asia/Tokyo\)"
 
-  log "watcher started: pane=$PANE_ID"
+  case "$AGENT" in
+    claude)
+      # You've hit your session limit · resets 11:20am (Asia/Tokyo)
+      limit_regex="You've hit your session limit.*resets[[:space:]]+([0-9]{1,2}):([0-9]{2})([aApP][mM])[[:space:]]+\(Asia/Tokyo\)"
+      ;;
+    codex)
+      # You've hit your usage limit. ... try again at 6:21 AM.
+      limit_regex="You've hit your usage limit\..*try again at[[:space:]]+([0-9]{1,2}):([0-9]{2})[[:space:]]+([aApP][mM])\."
+      ;;
+  esac
+
+  log "watcher started: agent=$AGENT pane=$PANE_ID"
 
   while true; do
 
@@ -296,7 +327,7 @@ watch_session_limit() {
           scheduled_reset="$reset_epoch"
           scheduled_target="$target_epoch"
 
-          log "session limit detected"
+          log "$AGENT limit detected"
           log "reset:  $(TZ="$TIMEZONE" date -d "@$reset_epoch" '+%Y-%m-%d %H:%M:%S')"
           log "resume: $(TZ="$TIMEZONE" date -d "@$target_epoch" '+%Y-%m-%d %H:%M:%S')"
         fi
@@ -387,14 +418,14 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 
 # ------------------------------------------------------------
-# Claude Code 起動
+# エージェント起動
 # ------------------------------------------------------------
 
-log "Claude Code starting: $CLAUDE_BIN"
+log "$AGENT starting: $AGENT_BIN"
 
-"$CLAUDE_BIN" "$@"
-CLAUDE_STATUS=$?
+"$AGENT_BIN" "$@"
+AGENT_STATUS=$?
 
-log "Claude Code exited: status=$CLAUDE_STATUS"
+log "$AGENT exited: status=$AGENT_STATUS"
 
-exit "$CLAUDE_STATUS"
+exit "$AGENT_STATUS"

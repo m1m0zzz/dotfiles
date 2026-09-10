@@ -7,8 +7,9 @@ alias ppppd='cd ../../../..'
 alias pppppd='cd ../../../../..'
 alias ppppppd='cd ../../../../../..'
 
-# ~/script/claude-auto-continue
-alias claude='claude-auto-continue'
+# ~/script/agent-auto-continue
+alias claude='agent-auto-continue'
+alias codex='agent-auto-continue --agent codex'
 
 # Windows の adb を利用する（PATH は .bashrc 側で設定）
 alias adb='adb.exe'
