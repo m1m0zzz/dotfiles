@@ -8,8 +8,8 @@
   `~/.agents/my-contexts/git-commit-identity.md`
 - ワークツリーを作る/消す時（**EnterWorktree で直接作らず `gwt` を使う**）:
   `~/.agents/my-contexts/worktree.md`
-- GitHub Stacked PR を操作する時:
-  `~/.agents/my-contexts/github-stacked-pr.md`
+- GitHub Stacked PR を操作する時（**`gh pr create --base` だけではスタックにならない**）:
+  `~/.agents/my-contexts/stacked-pr.md`
 
 # ローカルリポジトリ
 
