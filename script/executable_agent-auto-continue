@@ -21,10 +21,13 @@ set -uo pipefail
 # * WSL
 # * Herdr
 #
-# ~/.bashrc で以下の alias を設定可能:
+# Herdr のペイン外で起動された場合は監視できないため、
+# エージェントをそのまま exec して素通しする。
+#
+# 呼び出し側（~/.bash_functions.d/）:
 #
 #   alias claude='agent-auto-continue'
-#   alias codex='agent-auto-continue --agent codex'
+#   codex()  -> agent-auto-continue --agent codex --add-dir <git-common-dir>
 #
 # ============================================================
 
@@ -95,9 +98,6 @@ esac
 # 必要コマンドの確認
 # ------------------------------------------------------------
 
-command -v herdr >/dev/null 2>&1 ||
-  die "herdr が見つかりません。"
-
 command -v date >/dev/null 2>&1 ||
   die "date が見つかりません。"
 
@@ -117,11 +117,16 @@ if [[ -z "$AGENT_BIN" ]]; then
 fi
 
 # ------------------------------------------------------------
-# Herdr 内であることを確認
+# Herdr 外ではフォールバック
+#
+# watcher は herdr pane read / send-text に依存するので、Herdr のペイン外では
+# 利用制限を監視できない。そこでエージェントをそのまま exec して素通しする。
+# 監視が効かないだけで、起動は常に成功させる。
 # ------------------------------------------------------------
 
-if [[ -z "${HERDR_PANE_ID:-}" ]]; then
-  die "Herdr のペイン内で実行してください。HERDR_PANE_ID がありません。"
+if [[ -z "${HERDR_PANE_ID:-}" ]] || ! command -v herdr >/dev/null 2>&1; then
+  log "$AGENT starting without watcher (outside Herdr): $AGENT_BIN"
+  exec "$AGENT_BIN" "$@"
 fi
 
 PANE_ID="$HERDR_PANE_ID"
