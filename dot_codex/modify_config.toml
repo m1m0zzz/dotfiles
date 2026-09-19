@@ -1,0 +1,108 @@
+{{- /* chezmoi:modify-template */ -}}
+{{- /*
+
+~/.codex/config.toml をブロック単位で管理する。
+マーカーの内側だけが chezmoi のもので、外側（[projects] の trust_level や
+[hooks.state] など Codex 自身が書き込むもの）はそのまま残す。
+
+TOML の制約上、トップレベルの素のキー（model = ... など）はテーブル見出しより
+前にしか書けない。したがって管理ブロックは必ずファイル先頭に置き、マーカー外に
+素のキーが残ってはいけない。残っていた場合は下のガードが apply を止める。
+
+*/ -}}
+{{- $rest := .chezmoi.stdin | replaceAllRegex "(?s)^# chezmoi-managed:start.*?# chezmoi-managed:end\n*" "" -}}
+{{- $first := regexFind "(?m)^[^#[:space:]].*$" $rest -}}
+{{- if and $first (not (hasPrefix "[" $first)) -}}
+{{-   fail (printf "~/.codex/config.toml: 管理ブロックの外にトップレベルキー %q があります。dot_codex/modify_config.toml の管理ブロックへ移すか、ターゲットから削除してください。" $first) -}}
+{{- end -}}
+# chezmoi-managed:start
+# このブロックは chezmoi が生成する。編集は dotfiles/dot_codex/modify_config.toml で。
+# マーカーの外に書いたものは apply しても残る（Codex が書く [projects] などはそこ）。
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+default_permissions = "my-profile"
+
+[notice]
+hide_rate_limit_model_nudge = true
+
+[notice.model_migrations]
+"gpt-5.3-codex" = "gpt-5.4"
+
+[tui]
+status_line = [
+  "model-with-reasoning",
+  "current-dir",
+  "git-branch",
+  "pull-request-number",
+  "branch-changes",
+  "approval-mode",
+  "context-used",
+  "five-hour-limit",
+  "weekly-limit",
+  "codex-version",
+]
+status_line_use_colors = true
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+gpt-6-astra = 4
+
+[features]
+hooks = true
+network_proxy = true
+
+# 秘密ファイルを読めなくする権限プロファイル。
+# 注意: sandbox_mode をどこかの設定に書いたり、--sandbox / -s を渡したりすると、
+# 旧来の sandbox 設定が優先されてこのプロファイルは使われない
+[permissions.my-profile]
+description = "workspace に書き込めるが、.env などの秘密ファイルは読めない"
+extends = ":workspace"
+
+[permissions.my-profile.filesystem]
+glob_scan_max_depth = 8
+
+[permissions.my-profile.filesystem.":workspace_roots"]
+".git" = "write"
+"**/.env" = "deny"
+"**/.env.local" = "deny"
+"**/.env.*.local" = "deny"
+"**/.env.development" = "deny"
+"**/.env.staging" = "deny"
+"**/.env.production" = "deny"
+"**/.env.test" = "deny"
+"**/*.env" = "deny"
+"**/.dev.vars" = "deny"
+"**/.dev.vars.*" = "deny"
+
+[permissions.my-profile.network]
+enabled = true
+
+[permissions.my-profile.network.domains]
+"*" = "allow"
+
+# レビューなど書き込ませたくないとき: codex exec -c 'default_permissions="my-profile-read-only"'
+[permissions.my-profile-read-only]
+description = "読み取り専用で、.env などの秘密ファイルは読めない"
+extends = ":read-only"
+
+[permissions.my-profile-read-only.filesystem]
+glob_scan_max_depth = 8
+
+[permissions.my-profile-read-only.filesystem.":workspace_roots"]
+"**/.env" = "deny"
+"**/.env.local" = "deny"
+"**/.env.*.local" = "deny"
+"**/.env.development" = "deny"
+"**/.env.staging" = "deny"
+"**/.env.production" = "deny"
+"**/.env.test" = "deny"
+"**/*.env" = "deny"
+"**/.dev.vars" = "deny"
+"**/.dev.vars.*" = "deny"
+# chezmoi-managed:end
+{{ with $rest }}
+{{ trimSuffix "\n" . }}
+{{ end -}}

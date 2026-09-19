@@ -1,0 +1,110 @@
+# ~/.codex/rules/default.rules
+# 複数のルールにマッチした場合は最も厳しい判定が採用される（forbidden > prompt > allow）
+
+prefix_rule(
+    pattern = ["ls", ["-la", "-lh", "-lt"]],
+    decision = "allow",
+)
+
+# ---- git ----
+prefix_rule(
+    pattern = ["git", "status", "--short"],
+    decision = "allow",
+)
+
+# 汎用のgit add（worktreeでは.gitがsandbox内で読み取り専用のため）
+prefix_rule(
+    pattern = ["git", "add"],
+    decision = "allow",
+    justification = "worktreeでは.gitがsandbox内で読み取り専用のため",
+    match = ["git add -A", "git add src/foo.ts"],
+)
+prefix_rule(
+    pattern = ["git", "commit"],
+    decision = "allow",
+)
+
+# pushは毎回確認する
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "pushは毎回確認する",
+    match = ["git push origin HEAD"],
+    not_match = ["git -C ../wt push"],
+)
+
+prefix_rule(
+    pattern = ["git", "switch", "-c", "style/pixelated-work-images"],
+    decision = "allow",
+)
+
+# ---- npm ----
+prefix_rule(
+    pattern = ["npm", ["install", "ci", "i"]],
+    decision = "allow",
+)
+prefix_rule(
+    pattern = ["npm", "run"],
+    decision = "allow",
+)
+
+# ---- gh ----
+
+# 既定で許可し、マージ/クローズ/削除など状態を変える操作だけ確認・禁止する
+prefix_rule(
+    pattern = ["gh"],
+    decision = "allow",
+    justification = "gh は既定で許可し、破壊的・push相当の操作だけ個別ルールで上書きする",
+)
+
+# マージ・クローズ系
+prefix_rule(
+    pattern = ["gh", "pr", "merge"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "pr", "close"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "issue", "close"],
+    decision = "prompt",
+)
+
+# リモートの状態を変える系（push相当）
+prefix_rule(
+    pattern = ["gh", "release", "create"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "release", "delete"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "repo", "delete"],
+    decision = "forbidden",
+    justification = "リポジトリ削除は取り消せないため常に禁止",
+)
+prefix_rule(
+    pattern = ["gh", "repo", "archive"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "workflow", "run"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "secret", "set"],
+    decision = "prompt",
+)
+prefix_rule(
+    pattern = ["gh", "secret", "delete"],
+    decision = "prompt",
+)
+
+# gh api は任意のHTTPメソッドを実行できるため、prefixだけではGET/POST/DELETEを区別できない
+prefix_rule(
+    pattern = ["gh", "api"],
+    decision = "prompt",
+    justification = "gh api はメソッドを区別できないため一律確認する",
+)
