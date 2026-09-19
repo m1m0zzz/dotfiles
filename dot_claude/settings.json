@@ -3,19 +3,19 @@
     "BASH_ENV": "/home/mimoz/.safe-chain/scripts/init-posix.sh"
   },
   "permissions": {
+    "allow": [
+      "Bash(gwt add:*)",
+      "Bash(gwt path:*)",
+      "Bash(gwt list)",
+      "Bash(gwt ls)",
+      "Read(./.env_example)",
+      "Read(./**/.env_example)"
+    ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.local)",
-      "Read(./.env.*.local)",
-      "Read(./.env.development)",
-      "Read(./.env.production)",
-      "Read(./.env.test)",
+      "Read(./.env.*)",
       "Read(./**/.env)",
-      "Read(./**/.env.local)",
-      "Read(./**/.env.*.local)",
-      "Read(./**/.env.development)",
-      "Read(./**/.env.production)",
-      "Read(./**/.env.test)"
+      "Read(./**/.env.*)"
     ],
     "defaultMode": "auto"
   },
