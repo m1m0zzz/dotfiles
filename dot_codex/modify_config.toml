@@ -66,11 +66,11 @@ glob_scan_max_depth = 8
 
 [permissions.my-profile.filesystem.":workspace_roots"]
 ".git" = "write"
+# サンプルは .env.example ではなく .env_example に置く。.env.* に当たらないので
+# deny されず、そのまま読める（glob パスに read は指定できない仕様）
 "**/.env" = "deny"
 "**/.env.*" = "deny"
 "**/*.env" = "deny"
-# サンプルは .env.example ではなく .env_example に置く（.env.* の deny に掛からない）
-"**/.env_example" = "read"
 "**/.dev.vars" = "deny"
 "**/.dev.vars.*" = "deny"
 
@@ -89,11 +89,10 @@ extends = ":read-only"
 glob_scan_max_depth = 8
 
 [permissions.my-profile-read-only.filesystem.":workspace_roots"]
+# サンプルは .env.example ではなく .env_example に置く（上と同じ理由）
 "**/.env" = "deny"
 "**/.env.*" = "deny"
 "**/*.env" = "deny"
-# サンプルは .env.example ではなく .env_example に置く（.env.* の deny に掛からない）
-"**/.env_example" = "read"
 "**/.dev.vars" = "deny"
 "**/.dev.vars.*" = "deny"
 # chezmoi-managed:end
