@@ -62,6 +62,7 @@
     "figma@claude-plugins-official": true
   },
   "agentPushNotifEnabled": true,
+  "language": "japanese",
   "autoMode": {
     "environment": [
       "### Org-wide",
