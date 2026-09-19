@@ -21,6 +21,9 @@ set -uo pipefail
 # * WSL
 # * Herdr
 #
+# Herdr のペイン内では、エージェント一覧の行名を "aac-<agent>" にして
+# このスクリプト経由で起動したことが分かるようにする。
+#
 # Herdr のペイン外で起動された場合は監視できないため、
 # エージェントをそのまま exec して素通しする。
 #
@@ -130,6 +133,36 @@ if [[ -z "${HERDR_PANE_ID:-}" ]] || ! command -v herdr >/dev/null 2>&1; then
 fi
 
 PANE_ID="$HERDR_PANE_ID"
+
+# ------------------------------------------------------------
+# エージェント一覧の行名
+#
+# Herdr は手動で付けた名前が無いときだけ検出ラベル（claude / codex）を出す。
+# そこで "aac-<agent>" を付けて、このスクリプト経由で起動したペインを
+# 見分けられるようにする。
+#
+# 起動直後は Herdr がまだこのペインをエージェントとして認識しておらず
+# rename が失敗するため、watcher のループから成功するまで再試行する。
+# ------------------------------------------------------------
+
+PANE_NAME="aac-$AGENT"
+
+# 手動で付いている名前を返す。未設定なら空。
+pane_name() {
+  herdr agent get "$PANE_ID" 2>/dev/null |
+    grep -o '"name":"[^"]*"' |
+    head -n 1 |
+    cut -d'"' -f4
+}
+
+# 自分が付けた名前が残っていれば外す。
+# ユーザーが後から別名を付けた場合は奪わない。
+clear_pane_name() {
+  [[ "$(pane_name)" == "$PANE_NAME" ]] || return 0
+
+  herdr agent rename "$PANE_ID" --clear >/dev/null 2>&1 ||
+    log "WARN: pane rename --clear failed"
+}
 
 # ------------------------------------------------------------
 # 12時間表記の reset 時刻から Unix time を計算
@@ -270,6 +303,9 @@ watch_session_limit() {
   local current_reset=""
   local missing_count=0
 
+  # ペイン名を付け終えたか
+  local named=0
+
   # Terminal 幅によって途中で折り返される可能性があるため、
   # visible screen の改行をスペースへ変換してから判定する。
   local limit_regex
@@ -292,6 +328,20 @@ watch_session_limit() {
   log "watcher started: agent=$AGENT pane=$PANE_ID"
 
   while true; do
+
+    # ----------------------------------------------------
+    # エージェント一覧の行名を付ける（成功するまで再試行）
+    # ----------------------------------------------------
+
+    if ((named == 0)); then
+      if [[ -n "$(pane_name)" ]]; then
+        # すでに手動の名前がある。奪わない。
+        named=1
+      elif herdr agent rename "$PANE_ID" "$PANE_NAME" >/dev/null 2>&1; then
+        named=1
+        log "pane renamed: $PANE_NAME"
+      fi
+    fi
 
     # ----------------------------------------------------
     # 現在の Herdr pane を取得
@@ -442,6 +492,8 @@ WATCHER_PID=$!
 
 cleanup() {
   local status=$?
+
+  clear_pane_name
 
   if kill -0 "$WATCHER_PID" 2>/dev/null; then
     kill "$WATCHER_PID" 2>/dev/null || true
