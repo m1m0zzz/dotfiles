@@ -126,8 +126,10 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 export WIN_HOME='/mnt/c/Users/{{ .winuser }}'
 export PATH="$PATH:$WIN_HOME/AppData/Local/Programs/Microsoft VS Code/bin"
 export PATH=$PATH:'/mnt/c/tools/platform-tools'
+export PATH=$PATH:'/mnt/c/Program Files/Google/Chrome/Application'
 
 alias adb='adb.exe'
+alias chrome='chrome.exe'
 
 . "$HOME/.deno/env"
 source $HOME/.local/share/bash-completion/completions/deno.bash
