@@ -1,6 +1,6 @@
 {
   "env": {
-    "BASH_ENV": "/home/mimoz/.safe-chain/scripts/init-posix.sh"
+    "BASH_ENV": "~/.safe-chain/scripts/init-posix.sh"
   },
   "permissions": {
     "allow": [
@@ -20,49 +20,31 @@
     "defaultMode": "auto"
   },
   "model": "opus",
+  "language": "japanese",
   "hooks": {
     "SessionStart": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "pactl suspend-sink RDPSink false"
-          }
-        ]
-      },
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "bash '/home/mimoz/.claude/hooks/herdr-agent-state.sh' session",
+            "command": "bash '~/.claude/hooks/herdr-agent-state.sh'",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ./hooks/notify-complete.sh"
           }
         ]
       }
     ]
   },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true
+  },
+  "agentPushNotifEnabled": true,
+  "remoteControlAtStartup": true,
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.sh",
     "padding": 2
   },
-  "enabledPlugins": {
-    "figma@claude-plugins-official": true
-  },
-  "agentPushNotifEnabled": true,
-  "language": "japanese",
   "autoMode": {
     "environment": [
       "### Org-wide",
