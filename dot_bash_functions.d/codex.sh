@@ -2,7 +2,9 @@
 #
 # ワークツリーでは .git が「<main>/.git/worktrees/<name>」を指すファイルで、実体は
 # workspace の外にある。codex のサンドボックスからは見えず git 操作が失敗するので、
-# git の共通ディレクトリを --add-dir で明示的に渡す。
+# git の共通ディレクトリと main ワークツリーを --add-dir で明示的に渡す。
+# 共通ディレクトリだけでは git の参照は更新できても、別の場所にある main の
+# ファイル本体は更新できない。
 #
 # なぜ alias ではなく関数か:
 #   alias は関数より先に展開されるため、alias codex と関数 codex を両方定義すると
@@ -24,7 +26,14 @@ codex() {
   local extra=()
 
   if gitdir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
-    extra=(--add-dir "$gitdir")
+    extra+=(--add-dir "$gitdir")
+
+    # 通常のリポジトリと linked worktree のどちらでも、common dir が
+    # <main>/.git ならその親が main ワークツリー。通常のリポジトリでは cwd と
+    # 重複するだけだが、linked worktree ではマージ後に main を更新するために必要。
+    if [[ $gitdir == */.git ]]; then
+      extra+=(--add-dir "${gitdir%/.git}")
+    fi
   fi
 
   agent-auto-continue --agent codex "${extra[@]}" "$@"
