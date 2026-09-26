@@ -15,12 +15,6 @@
 #
 # ラッパーを迂回したいときは `command codex ...`。
 
-# alias はパース時に展開されるため、codex という alias が生きているシェルでは
-# 下の codex() { ... } が構文エラーになる。旧設定の alias が残ったまま
-# .bashrc を再読み込みした場合に備えて、先に外しておく。
-# （alias 展開はコマンド単位なので、別行の unalias は次の定義より先に効く）
-unalias codex 2>/dev/null
-
 codex() {
   local gitdir
   local extra=()

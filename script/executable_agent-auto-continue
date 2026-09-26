@@ -21,7 +21,7 @@ set -uo pipefail
 # * WSL
 # * Herdr
 #
-# Herdr のペイン内では、エージェント一覧の行名を "aac-<agent>" にして
+# Herdr のペイン内では、エージェント一覧の表示名を "aac-<agent>" にして
 # このスクリプト経由で起動したことが分かるようにする。
 #
 # Herdr のペイン外で起動された場合は監視できないため、
@@ -135,17 +135,18 @@ fi
 PANE_ID="$HERDR_PANE_ID"
 
 # ------------------------------------------------------------
-# エージェント一覧の行名
+# エージェント一覧の表示名
 #
-# Herdr は手動で付けた名前が無いときだけ検出ラベル（claude / codex）を出す。
-# そこで "aac-<agent>" を付けて、このスクリプト経由で起動したペインを
-# 見分けられるようにする。
+# Herdr が検出した agent identity（claude / codex）は変更せず、表示専用の
+# display-agent に "aac-<agent>" を設定する。display-agent はペインごとの
+# メタデータなので、複数の同種エージェントに同じ表示名を設定できる。
 #
-# 起動直後は Herdr がまだこのペインをエージェントとして認識しておらず
-# rename が失敗するため、watcher のループから成功するまで再試行する。
+# Herdr への接続が一時的に失敗しても回復できるよう、watcher のループから
+# 成功するまで再試行する。
 # ------------------------------------------------------------
 
 PANE_NAME="aac-$AGENT"
+PANE_METADATA_SOURCE="agent-auto-continue"
 
 # 手動で付いている名前を返す。未設定なら空。
 pane_name() {
@@ -155,13 +156,12 @@ pane_name() {
     cut -d'"' -f4
 }
 
-# 自分が付けた名前が残っていれば外す。
-# ユーザーが後から別名を付けた場合は奪わない。
-clear_pane_name() {
-  [[ "$(pane_name)" == "$PANE_NAME" ]] || return 0
-
-  herdr agent rename "$PANE_ID" --clear >/dev/null 2>&1 ||
-    log "WARN: pane rename --clear failed"
+# 自分が付けた表示名だけを外す。agent identity や手動名には触れない。
+clear_pane_display_agent() {
+  herdr pane report-metadata "$PANE_ID" \
+    --source "$PANE_METADATA_SOURCE" \
+    --clear-display-agent \
+    >/dev/null 2>&1
 }
 
 # ------------------------------------------------------------
@@ -303,8 +303,9 @@ watch_session_limit() {
   local current_reset=""
   local missing_count=0
 
-  # ペイン名を付け終えたか
+  # 表示名の設定を終えたか、自分の表示名を設定中か
   local named=0
+  local display_named=0
 
   # Terminal 幅によって途中で折り返される可能性があるため、
   # visible screen の改行をスペースへ変換してから判定する。
@@ -330,16 +331,26 @@ watch_session_limit() {
   while true; do
 
     # ----------------------------------------------------
-    # エージェント一覧の行名を付ける（成功するまで再試行）
+    # エージェント一覧の表示名を付ける（成功するまで再試行）
     # ----------------------------------------------------
 
     if ((named == 0)); then
       if [[ -n "$(pane_name)" ]]; then
         # すでに手動の名前がある。奪わない。
         named=1
-      elif herdr agent rename "$PANE_ID" "$PANE_NAME" >/dev/null 2>&1; then
+      elif herdr pane report-metadata "$PANE_ID" \
+        --source "$PANE_METADATA_SOURCE" \
+        --display-agent "$PANE_NAME" \
+        >/dev/null 2>&1; then
         named=1
-        log "pane renamed: $PANE_NAME"
+        display_named=1
+        log "pane display-agent set: $PANE_NAME"
+      fi
+    elif ((display_named == 1)) && [[ -n "$(pane_name)" ]]; then
+      # ユーザーが後から手動名を付けた場合は、その表示を優先する。
+      if clear_pane_display_agent; then
+        display_named=0
+        log "pane display-agent cleared for manual name"
       fi
     fi
 
@@ -493,12 +504,13 @@ WATCHER_PID=$!
 cleanup() {
   local status=$?
 
-  clear_pane_name
-
   if kill -0 "$WATCHER_PID" 2>/dev/null; then
     kill "$WATCHER_PID" 2>/dev/null || true
     wait "$WATCHER_PID" 2>/dev/null || true
   fi
+
+  clear_pane_display_agent ||
+    log "WARN: pane display-agent clear failed"
 
   log "watcher stopped"
 
