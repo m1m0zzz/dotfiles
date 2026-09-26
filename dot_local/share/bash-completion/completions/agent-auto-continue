@@ -1,0 +1,22 @@
+# bash completion for agent-auto-continue (~/script/agent-auto-continue)
+#   --agent は第 1 引数でのみ解釈されるため、そこだけ補完する。
+#   それ以降の引数はエージェント本体にそのまま渡るのでファイル名補完にする。
+
+_agent_auto_continue() {
+  local cur prev words cword split
+  _init_completion -s || return
+
+  # --agent <TAB> / --agent=<TAB>
+  if [ "$prev" = --agent ] && { [ "$cword" -eq 2 ] || $split; }; then
+    COMPREPLY=($(compgen -W 'claude codex' -- "$cur"))
+    return
+  fi
+
+  if [ "$cword" -eq 1 ] && [[ $cur == -* ]]; then
+    COMPREPLY=($(compgen -W '--agent' -- "$cur"))
+    return
+  fi
+
+  _filedir
+} &&
+  complete -F _agent_auto_continue agent-auto-continue

@@ -1,0 +1,14 @@
+# bash completion for adbrev (~/script/adbrev)
+#   PC 側で待ち受けている TCP ポート (dev サーバーなど) を候補に出す
+
+_adbrev() {
+  local cur prev words cword
+  _init_completion || return
+
+  [ "$cword" -eq 1 ] || return
+
+  local ports
+  ports="$(ss -Htln 2>/dev/null | awk '{ n = split($4, a, ":"); print a[n] }' | sort -un)"
+  COMPREPLY=($(compgen -W '$ports' -- "$cur"))
+} &&
+  complete -F _adbrev adbrev

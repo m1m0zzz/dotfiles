@@ -1,0 +1,36 @@
+# bash completion for gh-sparse (~/script/gh-sparse)
+#   第 1 引数: ghq 管理下の github.com リポジトリを owner/repo 形式で候補に出す
+#   第 2 引数: gh api でリモートのディレクトリを 1 階層ずつ候補に出す
+
+_gh_sparse() {
+  local cur prev words cword
+  _init_completion -n : || return
+
+  case "$cword" in
+  1)
+    if [[ $cur == -* ]]; then
+      COMPREPLY=($(compgen -W '-h --help' -- "$cur"))
+    elif command -v ghq >/dev/null 2>&1; then
+      COMPREPLY=($(compgen -W '$(ghq list 2>/dev/null | sed -n "s#^github\.com/##p")' -- "$cur"))
+    fi
+    ;;
+  2)
+    command -v gh >/dev/null 2>&1 || return
+
+    # URL / owner/repo から owner/repo を取り出す
+    local repo="${words[1]%.git}"
+    repo="${repo#*github.com[:/]}"
+    [[ $repo =~ ^[^/]+/[^/]+$ ]] || return
+
+    # 入力中のパスの親ディレクトリを取得してその直下のディレクトリを出す
+    local dir=""
+    [[ $cur == */* ]] && dir="${cur%/*}"
+    local dirs
+    dirs="$(timeout 5 gh api "repos/${repo}/contents/${dir}" \
+      --jq '.[] | select(.type == "dir") | .path + "/"' 2>/dev/null)" || return
+    COMPREPLY=($(compgen -W '$dirs' -- "$cur"))
+    compopt -o nospace
+    ;;
+  esac
+} &&
+  complete -F _gh_sparse gh-sparse
