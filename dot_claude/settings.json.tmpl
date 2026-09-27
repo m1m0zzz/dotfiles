@@ -4,7 +4,27 @@
     "BASH_ENV": "~/.safe-chain/scripts/init-posix.sh"
   },
   "sandbox": {
-    "enabled": true
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "excludedCommands": [
+      "git",
+      "docker",
+      "gh"
+    ],
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "*.github.com",
+        "*.githubusercontent.com",
+        "*.npmjs.org",
+        "cloudflare.com",
+        "*.cloudflare.com",
+        "nodejs.org",
+        "*.nodejs.org",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    }
   },
   "permissions": {
     "allow": [
@@ -37,7 +57,8 @@
       "Read(service-account*.json)",
       "Read(config/master.key)",
       "Read(config/credentials/*.key)",
-
+      "Bash(sudo *)",
+      "Bash(git push -f *)",
       "Read(~/.ssh/**)",
       "Read(~/.gnupg/**)",
       "Read(//mnt/c/Users/{{ .winuser }}/.aws/**)",
@@ -55,7 +76,6 @@
       "Read(~/.zsh_history)",
       "Read(~/.bash_history)",
       "Read(~/.claude.json)",
-
       "Edit(~/.claude/settings.json)"
     ],
     "defaultMode": "auto"
