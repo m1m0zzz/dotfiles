@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "env": {
     "BASH_ENV": "~/.safe-chain/scripts/init-posix.sh"
   },
@@ -14,8 +15,41 @@
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
-      "Read(./**/.env)",
-      "Read(./**/.env.*)"
+      "Read(!.env.example)",
+      "Read(.dev.vars)",
+      "Read(*.pem)",
+      "Read(*.key)",
+      "Read(*.p12)",
+      "Read(*.pfx)",
+      "Read(*.jks)",
+      "Read(*.keystore)",
+      "Read(*.tfstate)",
+      "Read(*.tfstate.*)",
+      "Read(secrets/**)",
+      "Read(credentials.json)",
+      "Read(service-account*.json)",
+      "Read(config/master.key)",
+      "Read(config/credentials/*.key)",
+
+      "Read(~/.ssh/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.kube/**)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.npmrc)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.config/gh/hosts.yml)",
+      "Read(~/.gem/credentials)",
+      "Read(~/.cargo/credentials.toml)",
+      "Read(~/.pypirc)",
+      "Read(~/.zsh_history)",
+      "Read(~/.bash_history)",
+      "Read(~/.claude.json)",
+
+      "Edit(~/.claude/settings.json)"
     ],
     "defaultMode": "auto"
   },
