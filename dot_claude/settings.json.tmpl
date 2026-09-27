@@ -3,6 +3,9 @@
   "env": {
     "BASH_ENV": "~/.safe-chain/scripts/init-posix.sh"
   },
+  "sandbox": {
+    "enabled": true
+  },
   "permissions": {
     "allow": [
       "Bash(gwt add:*)",
@@ -15,6 +18,10 @@
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
       "Read(!.env.example)",
       "Read(.dev.vars)",
       "Read(*.pem)",
@@ -33,9 +40,9 @@
 
       "Read(~/.ssh/**)",
       "Read(~/.gnupg/**)",
-      "Read(~/.aws/**)",
+      "Read(//mnt/c/Users/{{ .winuser }}/.aws/**)",
       "Read(~/.config/gcloud/**)",
-      "Read(~/.azure/**)",
+      "Read(//mnt/c/Users/{{ .winuser }}/.azure/**)",
       "Read(~/.kube/**)",
       "Read(~/.docker/config.json)",
       "Read(~/.npmrc)",
