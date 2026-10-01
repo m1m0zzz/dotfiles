@@ -3,29 +3,6 @@
   "env": {
     "BASH_ENV": "~/.safe-chain/scripts/init-posix.sh"
   },
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true,
-    "excludedCommands": [
-      "git *",
-      "docker *",
-      "gh *"
-    ],
-    "network": {
-      "allowedDomains": [
-        "github.com",
-        "*.github.com",
-        "*.githubusercontent.com",
-        "*.npmjs.org",
-        "cloudflare.com",
-        "*.cloudflare.com",
-        "nodejs.org",
-        "*.nodejs.org",
-        "pypi.org",
-        "files.pythonhosted.org"
-      ]
-    }
-  },
   "permissions": {
     "allow": [
       "Bash(gwt add:*)",
