@@ -2,5 +2,8 @@
        init 時に受け取って ~/.config/chezmoi/chezmoi.toml へ保存する */ -}}
 {{- $winuser := promptStringOnce . "winuser" "winuser" -}}
 
+{{- /* 実行元の umask（Claude Code のシェルは 0002）に左右されず 644 / 755 で配置する */}}
+umask = 0o022
+
 [data]
     winuser = {{ $winuser | quote }}
