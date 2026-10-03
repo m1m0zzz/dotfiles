@@ -1,5 +1,6 @@
 README.md
 CLAUDE.md
+AGENTS.md
 
 # 認証情報・秘密鍵を含むためchezmoi管理対象から除外
 .ssh
