@@ -58,7 +58,6 @@
     "defaultMode": "auto"
   },
   "model": "opus",
-  "language": "japanese",
   "hooks": {
     "SessionStart": [
       {
@@ -73,16 +72,17 @@
       }
     ]
   },
-  "enabledPlugins": {
-    "figma@claude-plugins-official": true
-  },
-  "agentPushNotifEnabled": true,
-  "remoteControlAtStartup": true,
   "statusLine": {
     "type": "command",
     "command": "~/.claude/statusline.sh",
     "padding": 2
   },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": true
+  },
+  "language": "japanese",
+  "remoteControlAtStartup": true,
+  "agentPushNotifEnabled": true,
   "autoMode": {
     "environment": [
       "### Org-wide",
@@ -110,5 +110,10 @@
       "**Org-specific CLIs**: ghq (used for locating local repo checkouts under ~/ghq/<host>/<user>/<repo>)",
       "routine under this repo's working tree is expected; no additional <user>/ prefix qualifiers found"
     ]
+  },
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "high"
+    }
   }
 }
